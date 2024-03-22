@@ -23,6 +23,11 @@ class UserManager():
         self.users[username] = (conn, addr) #튜플
         lock.release() #독립성 보장해야하는 작업이 끝나면 release 로 풀어 준다.
         self.sendMessageToAll('[%s] 입장' % username)
+        self.user_list_str = "^^" #실시간 접속자 목록을 담은 문자열을 첫글자 ^^로 시작해서 만드는 변수
+        for key in self.users.keys(): #실시간 self.users 딕셔너리에서 사용자 이름만 뜯어서 문자열로 만드는 과정
+            self.user_list_str += " " + key
+        self.sendMessageToAll(self.user_list_str)
+        #모든 접속 중인 클라이언트 객체들에게 위에서 만든 명부 문자열을 송출하는 함수 호출
         return username
 
     def removeUser(self, username):
@@ -32,48 +37,84 @@ class UserManager():
         del self.users[username]
         lock.release()
         self.sendMessageToAll('[%s] 퇴장' % username)
+        self.user_list_str = "^^" #실시간 접속자 목록을 담은 문자열을 첫글자 ^^로 시작해서 만드는 변수
+        for key in self.users.keys(): #실시간 self.users 딕셔너리에서 사용자 이름만 뜯어서 문자열로 만드는 과정
+            self.user_list_str += " " + key
+        self.sendMessageToAll(self.user_list_str)
 
     def forced_exit(self, username):
         if username not in self.users: #현재 서버가 관리하고 있는 접속자 목록 중 username이 있는지
             return
-        userlist.remove(username)
         self.users[username][0].close()
+        userlist.remove(username)
+        lock.acquire()
+        del self.users[username]
+        lock.release()
+        self.sendMessageToAll("[%s] 강제퇴장 당하셨습니다." % username)
+        self.user_list_str = "^^"  # 실시간 접속자 목록을 담은 문자열을 첫글자 ^^로 시작해서 만드는 변수
+        for key in self.users.keys():  # 실시간 self.users 딕셔너리에서 사용자 이름만 뜯어서 문자열로 만드는 과정
+            self.user_list_str += " " + key
+        self.sendMessageToAll(self.user_list_str)
 
-    def messageHandler(self, username, msg): # 서버가 유저를 강제 퇴장시킬 수 있는 기능 구현 가능한 부분
-        if msg[0] != '/' and self.per: #원래는 귓속말 부분
-            self.sendMessageToAll('[%s] %s' % (username, msg)) #전체 채팅 / 귓속말 했을 시, 귓속말을 하고자 하는 유저에게 메시지 전송하는 기능
-            return
-        else: #메시지가 /로 시작한다면 조건
-            if msg[0:2] == '/o' and username == 'admin': #admin이 /o를 입력했을 때
-                self.name = msg[3] + msg[4] + msg[5]
-                self.sendMessageToAll("[%s]님이 강제퇴장하셨습니다." % self.name)
-                self.forced_exit(self.name)
-            elif msg[0:2] == '/i' and username == 'admin':
-                self.name = msg[2:5]
-                userlist.append(self.name)
-            elif msg[0:2] == '/n' and username == 'admin':
-                self.sendMessageToAll("[공지사항]: %s" % msg[2:])
-            elif msg[0:2] == '/b' and username == 'admin':
-                if self.per:
-                    self.per = False
+    def messageHandler(self, username, msg): #강퇴하기나 이런 명령 여기서 하기
+        try:
+            splMsg = msg.split()
+            if msg[0] != '/' and self.per: #일반 메세지 부분
+                self.sendMessageToAll('[%s] %s' % (username, msg))
+                return
+            else: # /command 형태의 특수 메세지
+                if splMsg[0] == "/o" and username == "admin":
+                    self.name = splMsg[1]
+                    self.forced_exit(self.name)
+                    print(self.name)
+                elif splMsg[0] == "/b" and username == "admin":
+                    if (self.per):
+                        self.per = False
+                        self.sendMessageToAll("채팅이 비활성화 됩니다.")
+                        return
+                    elif (self.per == False):
+                        self.per = True
+                        self.sendMessageToAll("채팅이 활성화 됩니다.")
+                        return
+                elif splMsg[0] == "/n" and username == "admin" and self.per:
+                    tmp = msg.strip('/n')
+                    print(tmp)
+                    self.sendMessageToAll('%s %s' % ("[전체공지]", tmp))
                     return
-                else:
-                    self.per = True
-            elif msg[0:2] == '/w':
-                self.name = msg[3] + msg[4] + msg[5]
-                if self.name in userlist or self.name in 'admin':
-                    tmp = msg.split()
-                    str1 = self.name + ">>>" #self.name : 받는 사람 이름
-                    str2 = username + '>>>' #username : 보내는 사람 이름
-                    for i in range(2,len(tmp)):
-                        str1 += tmp[i] + ' '
-                        str2 += tmp[i] + ' '
-                    self.recUserMessage(username, str1) #보내는 사람 >>> 멘트
-                    self.sendUserMessage(self.name, str2) #받는 사람 >>> 멘트
-                    return
-                else:
-                    self.users[username][0].send("없는 유저 입니다.".encode())
-                    return
+
+                elif splMsg[0] == "/i" and username == "admin":
+                    self.name = splMsg[1]
+                    if self.name not in userlist:
+                        userlist.append(self.name)
+                    print(self.name)
+
+                elif splMsg[0] == "/w":
+                    self.name = splMsg[1]
+                    if self.name in userlist or self.name in admin:
+                        tmp = msg.split()
+                        str1 = self.name + " <<< "
+                        str2 = username + " >>> "
+                        for i in range(2, len(tmp)):
+                            str1 += tmp[i]+ " "
+                            str2 += tmp[i]+ " "
+                        self.recUserMessage(username, str1)
+                        self.sendUserMessage(self.name, str2)
+                        return
+                    else:
+                        self.users[username][0].send("잘못된 유저에게 전송 시도 하였습니다.".encode())
+                        return
+                elif splMsg[0] == "/차단":
+                    self.name = splMsg[1]
+                    self.block_list.append(self.name)
+                elif splMsg[0] == "/차단해제":
+                    self.name = splMsg[1]
+                    self.block_list.remove(self.name)
+            if msg.strip() == '/quit':
+                self.removeUser(username)
+                return -1
+        except Exception as e:
+            print(e)
+
 
     def sendMessageToAll(self, msg): # echo 역할(모두에게 메시지를 뿌려주는 역할)
         for conn, addr in self.users.values():
@@ -137,8 +178,8 @@ class MyTcpHandler(socketserver.BaseRequestHandler):
         print('[%s]종료' % self.client_address[0])
         self.userman.removeUser(username)
     def registerUsername(self):
-        self.request.send('ID'.encode())  # 요청
         while True:
+            self.request.send('ID를 입력해주세요'.encode())  # 요청
             username = self.request.recv(1024) #답변
             username = username.decode().strip() #strip() : 공백 제거
             ############################################################################
@@ -146,7 +187,7 @@ class MyTcpHandler(socketserver.BaseRequestHandler):
                 if self.userman.addUser(username, self.request, self.client_address):
                     return username
             else:
-                self.request.send("ID 다시 입력:".encode())
+                self.request.send("다시 입력해주세요".encode())
 
 class ChatingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     pass
